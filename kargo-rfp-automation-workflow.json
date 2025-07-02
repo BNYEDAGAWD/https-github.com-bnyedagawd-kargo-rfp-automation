@@ -1,0 +1,518 @@
+{
+  "name": "Kargo RFP Automation Workflow - Ben Gillow Brain Integration",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute",
+              "minute": 5
+            }
+          ]
+        },
+        "filters": {
+          "query": "from:(@amazon.com OR @kinesso.com OR @omnicommediagroup OR @mbww.com OR @rufusww.com) (RFP OR proposal OR \"Fire TV\" OR campaign) has:attachment",
+          "readStatus": "unread",
+          "labelIds": [],
+          "receivedAfter": "",
+          "receivedBefore": ""
+        },
+        "format": "full",
+        "download": true,
+        "options": {}
+      },
+      "id": "f0b4c2b4-d5a8-4c5e-9f1a-3e7b8c9d0e1f",
+      "name": "Secure Gmail Monitor",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail OAuth2 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kargo Intelligence Engine - Domain and Content Analysis\n\n// Initialize core mappings\nconst domainToAgency = {\n  'amazon.com': { agency: 'Client Direct', agencyId: '0010h00001ZIT8BAAX' },\n  'kinesso.com': { agency: 'Kinesso', agencyId: '001E000000cVeb3IAC' },\n  'omnicommediagroup.com': { agency: 'Omnicom Media Group', agencyId: '001Rl00000exIQ5IAM' },\n  'mbww.com': { agency: 'MBWW (Omnicom)', agencyId: '001Rl00000exIQ5IAM' },\n  'rufusww.com': { agency: 'RufusWW (Omnicom)', agencyId: '001Rl00000exIQ5IAM' }\n};\n\nconst divisionMapping = {\n  'prime video': { accountId: '0010h00001du5MCAAY', brand: 'Prime Video' },\n  'alexa': { accountId: '001Rl00000TRSkIIAX', brand: 'Alexa' },\n  'ads': { accountId: '001Rl00000703UyIAI', brand: 'Amazon Ads' },\n  'business': { accountId: '001Rl0000070ZRbIAM', brand: 'Amazon Business' },\n  'ring': { accountId: '0010h00001bqDoyAAE', brand: 'Ring' },\n  'aws': { accountId: '0010h00001i0vGdAAI', brand: 'AWS' },\n  'fresh': { accountId: '001Rl00000ZhPJyIAN', brand: 'Amazon Fresh' },\n  'reputation': { accountId: '0016Q00001wGx6eQAC', brand: 'Amazon Reputation' },\n  'xcm': { accountId: '0010h00001iIJvlAAG', brand: 'Amazon XCM' }\n};\n\n// Process each email item\nconst processedItems = [];\n\nfor (const item of $input.all()) {\n  try {\n    // Extract sender domain\n    const fromEmail = item.json.payload?.headers?.find(h => h.name === 'From')?.value || '';\n    const domainMatch = fromEmail.match(/@([^\\s>]+)/)?.[1] || '';\n    \n    // Security check - validate authorized domain\n    const authorizedDomains = ['amazon.com', 'kinesso.com', 'omnicommediagroup.com', 'mbww.com', 'rufusww.com'];\n    if (!authorizedDomains.some(domain => domainMatch.includes(domain))) {\n      console.log(`Unauthorized domain detected: ${domainMatch}. Skipping email.`);\n      continue;\n    }\n    \n    // Get agency mapping\n    const agencyMapping = Object.entries(domainToAgency).find(([domain]) => \n      domainMatch.includes(domain)\n    )?.[1] || { agency: 'Unknown', agencyId: null };\n    \n    // Extract email content\n    const subject = item.json.payload?.headers?.find(h => h.name === 'Subject')?.value || '';\n    const emailContent = item.json.snippet || '';\n    const messageId = item.json.id;\n    \n    // Extract brand/division from content\n    const contentLower = (subject + ' ' + emailContent).toLowerCase();\n    const brandMapping = Object.entries(divisionMapping).find(([keyword]) => \n      contentLower.includes(keyword)\n    )?.[1] || { accountId: agencyMapping.agencyId, brand: 'General' };\n    \n    // Extract campaign name from subject\n    const campaignName = subject\n      .replace(/^(re:|fwd:|fw:)\\s*/i, '')\n      .replace(/\\b(rfp|proposal|campaign)\\b/gi, '')\n      .trim() || 'Campaign';\n    \n    // Estimate flight dates and quarters\n    const now = new Date();\n    const currentQuarter = Math.ceil((now.getMonth() + 1) / 3);\n    const currentYear = now.getFullYear();\n    \n    // Extract budget indicators\n    const budgetMatches = emailContent.match(/\\$([\\d,]+(?:\\.\\d{2})?)[kmKM]?/g) || [];\n    let estimatedBudget = 50000; // Default\n    if (budgetMatches.length > 0) {\n      const budgetStr = budgetMatches[0].replace(/[$,]/g, '');\n      estimatedBudget = parseFloat(budgetStr);\n      if (budgetStr.toLowerCase().includes('k')) estimatedBudget *= 1000;\n      if (budgetStr.toLowerCase().includes('m')) estimatedBudget *= 1000000;\n    }\n    \n    // Determine budget tier\n    let budgetTier = 'Essential';\n    if (estimatedBudget >= 75000) budgetTier = 'Premium';\n    else if (estimatedBudget >= 25000) budgetTier = 'Growth';\n    \n    // Extract target audience indicators\n    const audienceKeywords = ['adults', 'women', 'men', 'millennials', 'gen z', 'parents', 'shoppers'];\n    const targetAudience = audienceKeywords.find(keyword => \n      contentLower.includes(keyword)\n    ) || 'General Audience';\n    \n    // Determine campaign objective\n    let campaignObjective = 'Brand Awareness';\n    if (contentLower.includes('conversion') || contentLower.includes('sales')) {\n      campaignObjective = 'Conversion';\n    } else if (contentLower.includes('consideration') || contentLower.includes('intent')) {\n      campaignObjective = 'Consideration';\n    } else if (contentLower.includes('retention') || contentLower.includes('loyalty')) {\n      campaignObjective = 'Retention';\n    }\n    \n    // Detect tentpole events\n    const tentpoles = {\n      'prime day': 'Prime Day',\n      'black friday': 'Black Friday',\n      'cyber monday': 'Cyber Monday',\n      'holiday': 'Holiday Season',\n      'back to school': 'Back to School',\n      'super bowl': 'Super Bowl'\n    };\n    \n    const tentpoleEvent = Object.entries(tentpoles).find(([keyword]) => \n      contentLower.includes(keyword)\n    )?.[1] || null;\n    \n    // Determine trading entity\n    let tradingEntity = 'Kargo Direct';\n    if (agencyMapping.agency.includes('Omnicom')) {\n      tradingEntity = 'Kargo via Omnicom';\n    } else if (agencyMapping.agency === 'Kinesso') {\n      tradingEntity = 'Kargo via Kinesso';\n    }\n    \n    // Extract attachments info\n    const attachments = item.json.payload?.parts?.filter(part => \n      part.filename && part.filename.length > 0\n    ) || [];\n    \n    const attachmentSummary = attachments.map(att => ({\n      filename: att.filename,\n      mimeType: att.mimeType,\n      size: att.body?.size || 0\n    }));\n    \n    // Generate opportunity name\n    const opportunityName = `${brandMapping.brand}_${campaignName.replace(/\\s+/g, '_')}_${currentQuarter}Q${currentYear}`;\n    \n    // Determine priority level\n    let priorityLevel = 'Medium';\n    if (estimatedBudget >= 100000 || brandMapping.brand === 'Prime Video') {\n      priorityLevel = 'High';\n    } else if (estimatedBudget < 25000) {\n      priorityLevel = 'Low';\n    }\n    \n    // Creative format detection\n    const creativeMixKeywords = {\n      'video': contentLower.includes('video') || contentLower.includes('tv'),\n      'display': contentLower.includes('display') || contentLower.includes('banner'),\n      'native': contentLower.includes('native') || contentLower.includes('sponsored'),\n      'audio': contentLower.includes('audio') || contentLower.includes('podcast')\n    };\n    \n    const creativeMix = Object.entries(creativeMixKeywords)\n      .filter(([format, detected]) => detected)\n      .map(([format]) => format)\n      .join(', ') || 'Display';\n    \n    // Measurement requirements\n    const measurementRequirements = [];\n    if (contentLower.includes('attribution')) measurementRequirements.push('Attribution');\n    if (contentLower.includes('viewability')) measurementRequirements.push('Viewability');\n    if (contentLower.includes('brand lift')) measurementRequirements.push('Brand Lift');\n    if (contentLower.includes('incrementality')) measurementRequirements.push('Incrementality');\n    \n    // Competitive considerations\n    const competitors = ['walmart', 'target', 'google', 'facebook', 'youtube', 'hulu', 'roku'];\n    const competitiveConsiderations = competitors.filter(comp => \n      contentLower.includes(comp)\n    ).join(', ') || 'Standard competitive landscape';\n    \n    // Timeline estimation\n    const timelineKeywords = {\n      'urgent': contentLower.includes('urgent') || contentLower.includes('asap'),\n      'q1': contentLower.includes('q1') || contentLower.includes('first quarter'),\n      'q2': contentLower.includes('q2') || contentLower.includes('second quarter'),\n      'q3': contentLower.includes('q3') || contentLower.includes('third quarter'),\n      'q4': contentLower.includes('q4') || contentLower.includes('fourth quarter')\n    };\n    \n    let estimatedTimeline = '2-3 weeks';\n    if (timelineKeywords.urgent) estimatedTimeline = '1 week';\n    \n    // Retail Media Network detection\n    let retailMediaNetwork = 'Not Specified';\n    if (contentLower.includes('dsp') || contentLower.includes('demand side')) {\n      retailMediaNetwork = 'Amazon DSP';\n    } else if (contentLower.includes('sponsored') || contentLower.includes('search')) {\n      retailMediaNetwork = 'Sponsored Products';\n    }\n    \n    // Build comprehensive output object\n    const processedItem = {\n      // Core identification\n      messageId,\n      domain: domainMatch,\n      agency: agencyMapping.agency,\n      agencyId: agencyMapping.agencyId,\n      accountId: brandMapping.accountId,\n      brand: brandMapping.brand,\n      \n      // Email content\n      subject,\n      emailContent,\n      fromEmail,\n      attachmentSummary,\n      \n      // Campaign details\n      campaignName,\n      opportunityName,\n      flightQuarter: `${currentQuarter}Q${currentYear}`,\n      tradingEntity,\n      retailMediaNetwork,\n      tentpoleEvent,\n      \n      // Financial\n      estimatedBudget,\n      budgetTier,\n      \n      // Strategic\n      campaignObjective,\n      targetAudience,\n      creativeMix,\n      measurementRequirements: measurementRequirements.join(', ') || 'Standard reporting',\n      competitiveConsiderations,\n      \n      // Timeline and priority\n      estimatedTimeline,\n      priorityLevel,\n      \n      // Processing metadata\n      processedAt: now.toISOString(),\n      workflowVersion: '1.0',\n      \n      // Salesforce preparation\n      closeDate: new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)).toISOString().split('T')[0], // 30 days from now\n      stageName: 'Prospect',\n      opportunityType: 'New Business',\n      \n      // Additional flags\n      brainstormRequired: true,\n      hasAttachments: attachments.length > 0,\n      requiresImmediateAttention: priorityLevel === 'High' || timelineKeywords.urgent\n    };\n    \n    processedItems.push(processedItem);\n    \n    // Log successful processing\n    console.log(`Successfully processed RFP from ${agencyMapping.agency} for ${brandMapping.brand}`);\n    \n  } catch (error) {\n    console.error(`Error processing email ${item.json.id}:`, error.message);\n    // Continue processing other emails\n  }\n}\n\n// Return processed items\nreturn processedItems.map(item => ({ json: item }));"
+      },
+      "id": "e1c5d3f2-8a9b-4d6e-a2f7-b8c4e9f0a1b2",
+      "name": "Kargo Intelligence Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {},
+        "requestBody": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are Ben Gillow, Kargo's expert sales strategist with deep knowledge of premium advertising formats and Amazon campaign optimization. Analyze RFPs using Kargo's proven methodologies with focus on strategic recommendations, competitive positioning, and format optimization."
+            },
+            {
+              "role": "user",
+              "content": "You are Ben Gillow, Kargo's expert sales strategist with deep knowledge of premium advertising formats and Amazon campaign optimization. Analyze this RFP using Kargo's proven methodologies.\n\nEMAIL CONTEXT:\n- From: {{$json.agency}} ({{$json.brand}} Division)\n- Subject: {{$json.subject}}\n- Content: {{$json.emailContent}}\n- Attachments: {{$json.attachmentSummary}}\n- Budget Tier: {{$json.budgetTier}} ({{$json.estimatedBudget}})\n- Timeline: {{$json.estimatedTimeline}}\n\nANALYSIS FRAMEWORK:\nApply Kargo's strategic assessment approach:\n\n## CAMPAIGN INTELLIGENCE\n**Objective Classification:** [Awareness/Consideration/Conversion/Retention]\n**Budget Tier Assessment:** [Essential <$25K / Growth $25K-$75K / Premium $75K+]\n**Competitive Landscape:** [Direct competitors mentioned, market positioning]\n**Seasonality Factors:** [Tentpole events, shopping periods, timing considerations]\n\n## KARGO FORMAT RECOMMENDATIONS\nBased on campaign objectives, recommend optimal format progression:\n**Tier 1 Foundation:** [Core formats for base investment]\n**Tier 2 Enhancement:** [Added formats for increased impact] \n**Tier 3 Premium:** [Full premium suite for maximum results]\n\n## STRATEGIC CONSIDERATIONS\n**Targeting Strategy:** [Audience segments, contextual requirements, device strategy]\n**Creative Requirements:** [Format specifications, asset needs, brand safety]\n**Measurement Framework:** [KPIs, attribution, research requirements]\n**Added Value Opportunities:** [Analytics, optimization, custom development]\n\n## BRAINSTORM PREPARATION\n**Key Questions:** [Critical items for team discussion]\n**Competitive Intelligence Needs:** [Research requirements]\n**Inventory Considerations:** [Availability checks needed]\n**Timeline Implications:** [Flight dates, approval cycles, creative development]\n\n## RISK ASSESSMENT\n**Budget Realism:** [Alignment between goals and investment]\n**Feasibility Concerns:** [Technical or inventory limitations]\n**Decision Timeline:** [Approval process complexity]\n**Account History:** [Past performance, relationship factors]\n\nProvide analysis in markdown format optimized for team consumption and Salesforce documentation. Focus on actionable insights and specific Kargo format recommendations based on the {{$json.budgetTier}} tier and {{$json.campaignObjective}} objective."
+            }
+          ]
+        }
+      },
+      "id": "d2f6e4c1-9b0c-5e7f-b3a8-c1d5e7f9b0c2",
+      "name": "Advanced RFP Analyzer",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "2",
+          "name": "Anthropic API account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "opportunity",
+        "operation": "create",
+        "recordData": {
+          "Name": "={{$('Kargo Intelligence Engine').item.json.opportunityName}}",
+          "StageName": "Prospect",
+          "CloseDate": "={{$('Kargo Intelligence Engine').item.json.closeDate}}",
+          "Amount": "={{$('Kargo Intelligence Engine').item.json.estimatedBudget}}",
+          "AccountId": "={{$('Kargo Intelligence Engine').item.json.accountId}}",
+          "Type": "New Business",
+          "Description": "={{$('Advanced RFP Analyzer').item.json.response}}",
+          "Campaign_Type__c": "={{$('Kargo Intelligence Engine').item.json.brand}}",
+          "Agency__c": "={{$('Kargo Intelligence Engine').item.json.agencyId}}",
+          "Trading_Entity__c": "={{$('Kargo Intelligence Engine').item.json.tradingEntity}}",
+          "RMN_Service_Type__c": "={{$('Kargo Intelligence Engine').item.json.retailMediaNetwork}}",
+          "Tentpole_Event__c": "={{$('Kargo Intelligence Engine').item.json.tentpoleEvent}}",
+          "Flight_Start__c": "={{$('Kargo Intelligence Engine').item.json.closeDate}}",
+          "Flight_End__c": "={{DateTime.format(DateTime.parse($('Kargo Intelligence Engine').item.json.closeDate).plus({months: 3}), 'yyyy-MM-dd')}}",
+          "Primary_KPI__c": "={{$('Kargo Intelligence Engine').item.json.campaignObjective}}",
+          "Campaign_Objective__c": "={{$('Kargo Intelligence Engine').item.json.campaignObjective}}",
+          "RFP_Source__c": "Email - {{$('Kargo Intelligence Engine').item.json.agency}}",
+          "Brainstorm_Required__c": true,
+          "Budget_Tier__c": "={{$('Kargo Intelligence Engine').item.json.budgetTier}}",
+          "Target_Audience__c": "={{$('Kargo Intelligence Engine').item.json.targetAudience}}",
+          "Creative_Mix__c": "={{$('Kargo Intelligence Engine').item.json.creativeMix}}",
+          "Measurement_Requirements__c": "={{$('Kargo Intelligence Engine').item.json.measurementRequirements}}",
+          "Competitive_Considerations__c": "={{$('Kargo Intelligence Engine').item.json.competitiveConsiderations}}",
+          "Priority_Level__c": "={{$('Kargo Intelligence Engine').item.json.priorityLevel}}",
+          "Email_Source_ID__c": "={{$('Kargo Intelligence Engine').item.json.messageId}}"
+        },
+        "options": {}
+      },
+      "id": "c3e7a5b4-0d1e-6f8a-9c2d-f0a3b5c7d9e1",
+      "name": "Salesforce Opportunity Creator",
+      "type": "n8n-nodes-base.salesforce",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "3",
+          "name": "Salesforce OAuth2 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "kargo-sales@kargo.com",
+        "subject": "BRAINSTORM REQUIRED: {{$('Kargo Intelligence Engine').item.json.brand}} RFP from {{$('Kargo Intelligence Engine').item.json.agency}} - {{$('Kargo Intelligence Engine').item.json.campaignName}}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <style>\n        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }\n        .container { max-width: 800px; margin: 0 auto; background-color: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }\n        .header { background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }\n        .content { padding: 30px; }\n        .alert-badge { background-color: #FF6B35; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; display: inline-block; margin-bottom: 20px; }\n        .section { margin-bottom: 25px; }\n        .section h3 { color: #333; border-bottom: 2px solid #FF6B35; padding-bottom: 8px; margin-bottom: 15px; }\n        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }\n        .info-item { background-color: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #FF6B35; }\n        .info-label { font-weight: bold; color: #666; margin-bottom: 5px; }\n        .info-value { color: #333; font-size: 16px; }\n        .action-list { background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 20px; }\n        .action-item { margin-bottom: 10px; padding-left: 20px; position: relative; }\n        .action-item:before { content: '✅'; position: absolute; left: 0; }\n        .priority-high { border-left-color: #dc3545; }\n        .priority-medium { border-left-color: #ffc107; }\n        .priority-low { border-left-color: #28a745; }\n        .cta-section { background-color: #e3f2fd; padding: 20px; border-radius: 6px; text-align: center; margin-top: 25px; }\n        .cta-button { background-color: #FF6B35; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 10px; }\n        .analysis-section { background-color: #f8f9fa; padding: 20px; border-radius: 6px; margin: 20px 0; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"header\">\n            <h1>🎯 NEW RFP ALERT</h1>\n            <p style=\"margin: 0; font-size: 18px;\">Immediate Action Required - Priority: {{$('Kargo Intelligence Engine').item.json.priorityLevel}}</p>\n        </div>\n        \n        <div class=\"content\">\n            <div class=\"alert-badge\">BRAINSTORM REQUIRED</div>\n            \n            <div class=\"section\">\n                <h3>📋 CAMPAIGN OVERVIEW</h3>\n                <div class=\"info-grid\">\n                    <div class=\"info-item\">\n                        <div class=\"info-label\">Source Agency</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.agency}}</div>\n                    </div>\n                    <div class=\"info-item\">\n                        <div class=\"info-label\">Brand Division</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.brand}}</div>\n                    </div>\n                    <div class=\"info-item\">\n                        <div class=\"info-label\">Campaign</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.campaignName}}</div>\n                    </div>\n                    <div class=\"info-item\">\n                        <div class=\"info-label\">Budget Tier</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.budgetTier}} (${{$('Kargo Intelligence Engine').item.json.estimatedBudget}})</div>\n                    </div>\n                    <div class=\"info-item\">\n                        <div class=\"info-label\">Timeline</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.estimatedTimeline}}</div>\n                    </div>\n                    <div class=\"info-item priority-{{$('Kargo Intelligence Engine').item.json.priorityLevel | lower}}\">\n                        <div class=\"info-label\">Priority Level</div>\n                        <div class=\"info-value\">{{$('Kargo Intelligence Engine').item.json.priorityLevel}}</div>\n                    </div>\n                </div>\n            </div>\n            \n            <div class=\"section\">\n                <h3>🔍 STRATEGIC BRIEF</h3>\n                <div class=\"analysis-section\">\n                    <strong>Campaign Objective:</strong> {{$('Kargo Intelligence Engine').item.json.campaignObjective}}<br>\n                    <strong>Target Audience:</strong> {{$('Kargo Intelligence Engine').item.json.targetAudience}}<br>\n                    <strong>Creative Mix:</strong> {{$('Kargo Intelligence Engine').item.json.creativeMix}}<br>\n                    <strong>Trading Entity:</strong> {{$('Kargo Intelligence Engine').item.json.tradingEntity}}<br>\n                    <strong>Tentpole Event:</strong> {{$('Kargo Intelligence Engine').item.json.tentpoleEvent || 'None specified'}}\n                </div>\n            </div>\n            \n            <div class=\"section\">\n                <h3>⚡ REQUIRED ACTIONS</h3>\n                <div class=\"action-list\">\n                    <div class=\"action-item\">Review full RFP in Salesforce within 2 hours</div>\n                    <div class=\"action-item\">Confirm brainstorm availability (target: next 24 hours)</div>\n                    <div class=\"action-item\">Prepare format recommendations based on {{$('Kargo Intelligence Engine').item.json.budgetTier}} tier</div>\n                    <div class=\"action-item\">Research competitive landscape and case studies</div>\n                    <div class=\"action-item\">Validate inventory availability for flight dates</div>\n                    <div class=\"action-item\">Confirm {{$('Kargo Intelligence Engine').item.json.retailMediaNetwork}} capabilities</div>\n                </div>\n            </div>\n            \n            <div class=\"section\">\n                <h3>📊 CLAUDE ANALYSIS PREVIEW</h3>\n                <div class=\"analysis-section\">\n                    {{$('Advanced RFP Analyzer').item.json.response | truncate(500)}}\n                    <br><br>\n                    <em>Full analysis available in Salesforce opportunity record.</em>\n                </div>\n            </div>\n            \n            <div class=\"cta-section\">\n                <h3>🚀 NEXT STEPS</h3>\n                <p>Reply with brainstorm availability. Use links below for immediate access.</p>\n                <a href=\"https://kargo.lightning.force.com/lightning/r/Opportunity/{{$('Salesforce Opportunity Creator').item.json.id}}/view\" class=\"cta-button\">View in Salesforce</a>\n                <a href=\"https://calendly.com/kargo-brainstorm\" class=\"cta-button\">Schedule Brainstorm</a>\n            </div>\n            \n            <div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;\">\n                <strong>Kargo Sales Intelligence System</strong><br>\n                Automated RFP Processing | Priority: {{$('Kargo Intelligence Engine').item.json.priorityLevel}} | Generated: {{DateTime.now().toFormat('MMM dd, yyyy HH:mm')}}\n            </div>\n        </div>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "b5d9f1e3-2c4a-7f0b-8e1d-a9c5e7f1b3d5",
+      "name": "Team Communication Hub",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "4",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C01234567890",
+          "mode": "list",
+          "cachedResultName": "#sales-alerts"
+        },
+        "text": "🚨 {{$('Kargo Intelligence Engine').item.json.brand}} RFP Alert from {{$('Kargo Intelligence Engine').item.json.agency}}",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "textType": "plainText",
+              "text": "🎯 NEW RFP: {{$('Kargo Intelligence Engine').item.json.brand}} Campaign"
+            },
+            {
+              "type": "section",
+              "fieldsUi": {
+                "fieldsValues": [
+                  {
+                    "type": "markdownText",
+                    "text": "*Agency:* {{$('Kargo Intelligence Engine').item.json.agency}}"
+                  },
+                  {
+                    "type": "markdownText", 
+                    "text": "*Budget Tier:* {{$('Kargo Intelligence Engine').item.json.budgetTier}}"
+                  },
+                  {
+                    "type": "markdownText",
+                    "text": "*Timeline:* {{$('Kargo Intelligence Engine').item.json.estimatedTimeline}}"
+                  },
+                  {
+                    "type": "markdownText",
+                    "text": "*Priority:* {{$('Kargo Intelligence Engine').item.json.priorityLevel}}"
+                  },
+                  {
+                    "type": "markdownText",
+                    "text": "*Campaign:* {{$('Kargo Intelligence Engine').item.json.campaignName}}"
+                  },
+                  {
+                    "type": "markdownText",
+                    "text": "*Budget:* ${{$('Kargo Intelligence Engine').item.json.estimatedBudget}}"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "section",
+              "textType": "markdownText",
+              "text": "*Subject:* {{$('Kargo Intelligence Engine').item.json.subject}}\\n*Objective:* {{$('Kargo Intelligence Engine').item.json.campaignObjective}}\\n*Trading Entity:* {{$('Kargo Intelligence Engine').item.json.tradingEntity}}"
+            },
+            {
+              "type": "actions",
+              "elementsUi": {
+                "elementsValues": [
+                  {
+                    "type": "button",
+                    "textType": "plainText",
+                    "text": "View in Salesforce",
+                    "url": "https://kargo.lightning.force.com/lightning/r/Opportunity/{{$('Salesforce Opportunity Creator').item.json.id}}/view",
+                    "style": "primary"
+                  },
+                  {
+                    "type": "button",
+                    "textType": "plainText", 
+                    "text": "Schedule Brainstorm",
+                    "url": "https://calendly.com/kargo-brainstorm"
+                  },
+                  {
+                    "type": "button",
+                    "textType": "plainText",
+                    "text": "View Email",
+                    "url": "https://mail.google.com/mail/u/0/#inbox/{{$('Kargo Intelligence Engine').item.json.messageId}}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "otherOptions": {}
+      },
+      "id": "a7f3b9d1-4e5c-8f2a-9b0d-c3e5f7a9b1d3",
+      "name": "Slack Integration",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "5",
+          "name": "Slack OAuth2 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "1f2a3b4c-5d6e-7f8a-9b0c-1d2e3f4a5b6c",
+              "leftValue": "={{$json.domain}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "2e3f4a5b-6c7d-8e9f-0a1b-2c3d4e5f6a7b",
+              "leftValue": "={{$json.agency}}",
+              "rightValue": "Unknown",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "3d4e5f6a-7b8c-9d0e-1f2a-3b4c5d6e7f8a",
+              "leftValue": "={{$json.estimatedBudget}}",
+              "rightValue": 1000,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f8a1b2c3-9d4e-5f6a-7b8c-9d0e1f2a3b4c",
+      "name": "Quality Control Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Handler and Audit Logger\n\nconst items = $input.all();\nconst errors = [];\nconst auditLog = [];\n\nfor (const item of items) {\n  try {\n    const timestamp = new Date().toISOString();\n    const logEntry = {\n      timestamp,\n      workflowId: $workflow.id,\n      executionId: $execution.id,\n      status: 'success',\n      emailId: item.json.messageId || 'unknown',\n      agency: item.json.agency || 'unknown',\n      brand: item.json.brand || 'unknown',\n      opportunityId: item.json.opportunityId || null,\n      processedData: {\n        budgetTier: item.json.budgetTier,\n        priorityLevel: item.json.priorityLevel,\n        hasAttachments: item.json.hasAttachments,\n        requiresImmediateAttention: item.json.requiresImmediateAttention\n      }\n    };\n    \n    auditLog.push(logEntry);\n    \n  } catch (error) {\n    const errorEntry = {\n      timestamp: new Date().toISOString(),\n      workflowId: $workflow.id,\n      executionId: $execution.id,\n      status: 'error',\n      error: error.message,\n      stack: error.stack,\n      itemData: JSON.stringify(item.json, null, 2)\n    };\n    \n    errors.push(errorEntry);\n  }\n}\n\n// Log to console for debugging\nconsole.log('Audit Log:', JSON.stringify(auditLog, null, 2));\nif (errors.length > 0) {\n  console.error('Errors:', JSON.stringify(errors, null, 2));\n}\n\n// Return summary\nreturn [{\n  json: {\n    processedCount: auditLog.length,\n    errorCount: errors.length,\n    auditLog,\n    errors,\n    summary: {\n      totalProcessed: auditLog.length,\n      successfullyProcessed: auditLog.filter(log => log.status === 'success').length,\n      errorsEncountered: errors.length,\n      lastProcessedAt: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "e9f0a1b2-3c4d-5e6f-7a8b-9c0d1e2f3a4b",
+      "name": "Error Handler & Audit Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "4c5d6e7f-8a9b-0c1d-2e3f-4a5b6c7d8e9f",
+              "leftValue": "={{$json.priorityLevel}}",
+              "rightValue": "High",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "d0e1f2a3-4b5c-6d7e-8f9a-0b1c2d3e4f5a",
+      "name": "High Priority Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "executives@kargo.com,sales-leadership@kargo.com",
+        "subject": "🚨 HIGH PRIORITY RFP: {{$('Kargo Intelligence Engine').item.json.brand}} - {{$('Kargo Intelligence Engine').item.json.agency}} (${{$('Kargo Intelligence Engine').item.json.estimatedBudget}})",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }\n        .urgent-container { max-width: 600px; margin: 0 auto; background-color: #fff; border: 3px solid #dc3545; border-radius: 8px; }\n        .urgent-header { background-color: #dc3545; color: white; padding: 20px; text-align: center; }\n        .urgent-content { padding: 20px; }\n        .urgent-badge { background-color: #dc3545; color: white; padding: 10px 20px; border-radius: 25px; font-weight: bold; display: inline-block; }\n        .key-info { background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; padding: 15px; margin: 15px 0; }\n        .cta-urgent { background-color: #dc3545; color: white; padding: 15px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 10px 0; }\n    </style>\n</head>\n<body>\n    <div class=\"urgent-container\">\n        <div class=\"urgent-header\">\n            <h1>🚨 HIGH PRIORITY RFP ALERT</h1>\n            <div class=\"urgent-badge\">IMMEDIATE ATTENTION REQUIRED</div>\n        </div>\n        <div class=\"urgent-content\">\n            <div class=\"key-info\">\n                <strong>Agency:</strong> {{$('Kargo Intelligence Engine').item.json.agency}}<br>\n                <strong>Brand:</strong> {{$('Kargo Intelligence Engine').item.json.brand}}<br>\n                <strong>Budget:</strong> ${{$('Kargo Intelligence Engine').item.json.estimatedBudget}} ({{$('Kargo Intelligence Engine').item.json.budgetTier}} Tier)<br>\n                <strong>Timeline:</strong> {{$('Kargo Intelligence Engine').item.json.estimatedTimeline}}<br>\n                <strong>Campaign:</strong> {{$('Kargo Intelligence Engine').item.json.campaignName}}\n            </div>\n            <p><strong>This RFP has been flagged for immediate executive attention due to:</strong></p>\n            <ul>\n                <li>High budget tier ({{$('Kargo Intelligence Engine').item.json.budgetTier}})</li>\n                <li>Strategic importance ({{$('Kargo Intelligence Engine').item.json.brand}})</li>\n                <li>Urgent timeline requirements</li>\n            </ul>\n            <a href=\"https://kargo.lightning.force.com/lightning/r/Opportunity/{{$('Salesforce Opportunity Creator').item.json.id}}/view\" class=\"cta-urgent\">Review Immediately in Salesforce</a>\n        </div>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "c1d2e3f4-5a6b-7c8d-9e0f-1a2b3c4d5e6f",
+      "name": "Executive Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        120
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "4",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Secure Gmail Monitor": {
+      "main": [
+        [
+          {
+            "node": "Kargo Intelligence Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kargo Intelligence Engine": {
+      "main": [
+        [
+          {
+            "node": "Quality Control Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Control Filter": {
+      "main": [
+        [
+          {
+            "node": "Advanced RFP Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advanced RFP Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Salesforce Opportunity Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salesforce Opportunity Creator": {
+      "main": [
+        [
+          {
+            "node": "High Priority Filter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Team Communication Hub",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Integration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High Priority Filter": {
+      "main": [
+        [
+          {
+            "node": "Executive Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Team Communication Hub": {
+      "main": [
+        [
+          {
+            "node": "Error Handler & Audit Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Integration": {
+      "main": [
+        [
+          {
+            "node": "Error Handler & Audit Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executive Alert": {
+      "main": [
+        [
+          {
+            "node": "Error Handler & Audit Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "timezone": "America/New_York",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-handler-workflow-id"
+    }
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2025-01-21T12:00:00.000Z",
+      "updatedAt": "2025-01-21T12:00:00.000Z",
+      "id": "1",
+      "name": "Kargo Sales"
+    },
+    {
+      "createdAt": "2025-01-21T12:00:00.000Z", 
+      "updatedAt": "2025-01-21T12:00:00.000Z",
+      "id": "2",
+      "name": "RFP Automation"
+    },
+    {
+      "createdAt": "2025-01-21T12:00:00.000Z",
+      "updatedAt": "2025-01-21T12:00:00.000Z", 
+      "id": "3",
+      "name": "Production"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-21T12:00:00.000Z",
+  "versionId": "1.0"
+}
