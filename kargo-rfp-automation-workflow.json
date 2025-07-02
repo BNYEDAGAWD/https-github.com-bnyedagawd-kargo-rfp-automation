@@ -125,8 +125,8 @@
       ],
       "credentials": {
         "salesforceOAuth2Api": {
-          "id": "3",
-          "name": "Salesforce OAuth2 account"
+          "id": "BBybUndrvYlNzxkP",
+          "name": "Salesforce account 2"
         }
       }
     },
